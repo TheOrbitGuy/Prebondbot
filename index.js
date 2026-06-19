@@ -206,21 +206,3 @@ main().catch(err => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
-Also update package.json — add ws to dependencies:
-{
-  "name": "prebond-scanner-bot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "grammy": "^1.21.1",
-    "ws": "^8.16.0",
-    "dotenv": "^16.4.1"
-  },
-  "engines": {
-    "node": ">=18"
-  }
-}
