@@ -97,9 +97,9 @@ function sleep(ms) {
 }
 
 function connectWebSocket() {
-  console.log("🔌 Connecting to pump.fun WebSocket...");
+  console.log("🔌 Connecting to PumpPortal...");
 
-  const ws = new WebSocket("wss://frontend-api.pump.fun/socket.io/?EIO=4&transport=websocket", {
+  const ws = new WebSocket("wss://pumpportal.fun/api/data", {
     headers: {
       "Origin": "https://pump.fun",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -107,51 +107,31 @@ function connectWebSocket() {
   });
 
   ws.on("open", () => {
-    console.log("✅ WebSocket connected!");
-    // Socket.io handshake
-    ws.send("40");
+    console.log("✅ Connected to PumpPortal!");
+    ws.send(JSON.stringify({ method: "subscribeNewToken" }));
   });
 
   ws.on("message", async (data) => {
-    const msg = data.toString();
-
-    // Socket.io ping/pong
-    if (msg === "2") { ws.send("3"); return; }
-    if (msg.startsWith("0") || msg.startsWith("40")) return;
-
     try {
-      // Strip socket.io prefix (e.g. "42[...]")
-      const jsonStr = msg.replace(/^\d+/, "");
-      if (!jsonStr.startsWith("[")) return;
-
-      const parsed = JSON.parse(jsonStr);
-      const event  = parsed[0];
-      const token  = parsed[1];
-
-      // Only care about new token creation events
-      if (event !== "newToken") return;
-      if (!token || !token.mint) return;
+      const token = JSON.parse(data.toString());
+      if (!token.mint) return;
       if (seenMints.has(token.mint)) return;
-
       seenMints.add(token.mint);
 
-      const bonded = token.complete === true || token.raydiumPool != null;
-      const hasTg  = token.telegram && token.telegram.trim().length > 0;
-      const pct    = getBondPct(token);
+      const bonded  = token.complete === true;
+      const hasTg   = token.telegram && token.telegram.trim().length > 0;
+      const pct     = getBondPct(token);
       const replies = token.replyCount || 0;
 
       if (bonded || !hasTg || pct < MIN_BOND_PCT || pct > MAX_BOND_PCT || replies < MIN_REPLIES) return;
 
-      console.log(`🎯 New token: ${token.symbol} | Bond: ${pct.toFixed(1)}% | TG: ${token.telegram}`);
+      console.log(`🎯 ${token.symbol} | Bond: ${pct.toFixed(1)}% | TG: ${token.telegram}`);
       await sendAlert(token);
-
-    } catch (e) {
-      // ignore parse errors
-    }
+    } catch (e) {}
   });
 
   ws.on("close", () => {
-    console.log("⚠️ WebSocket closed — reconnecting in 5s...");
+    console.log("⚠️ Disconnected — reconnecting in 5s...");
     setTimeout(connectWebSocket, 5000);
   });
 
@@ -160,11 +140,10 @@ function connectWebSocket() {
   });
 }
 
-// Bot commands
 bot.command("start", async (ctx) => {
   await ctx.reply(
     "👋 *PreBond Scanner Bot*\n\n" +
-    "I watch pump\\.fun in real\\-time via WebSocket and alert you to new unbonded tokens with Telegram communities\\.\n\n" +
+    "I watch pump\\.fun in real\\-time and alert you to new unbonded tokens with Telegram communities\\.\n\n" +
     "/status \\— show stats\n" +
     "/config \\— show filter settings",
     { parse_mode: "MarkdownV2" }
@@ -174,7 +153,7 @@ bot.command("start", async (ctx) => {
 bot.command("status", async (ctx) => {
   await ctx.reply(
     `📊 *Scanner Status*\n\n` +
-    `✅ Running via WebSocket\n` +
+    `✅ Running via PumpPortal\n` +
     `📢 Alerts sent: \`${foundTotal}\`\n` +
     `🧠 Tokens seen: \`${seenMints.size}\``,
     { parse_mode: "MarkdownV2" }
