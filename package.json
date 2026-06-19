@@ -1,16 +1,14 @@
 {
   "name": "prebond-scanner-bot",
   "version": "1.0.0",
-  "description": "pump.fun pre-bond token scanner Telegram bot",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "grammy": "^1.21.1",
-    "node-fetch": "^3.3.2",
+    "ws": "^8.16.0",
     "dotenv": "^16.4.1"
   },
   "engines": {
