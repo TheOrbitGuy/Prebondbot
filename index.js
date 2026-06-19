@@ -62,9 +62,9 @@ function cleanTgUrl(raw) {
 
 async function fetchPumpTokens() {
   const urls = [
-    "https://frontend-api.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=false",
-    "https://frontend-api.pump.fun/coins?offset=50&limit=50&sort=created_timestamp&order=DESC&includeNsfw=false",
-    "https://frontend-api.pump.fun/coins?offset=0&limit=50&sort=last_trade_timestamp&order=DESC&includeNsfw=false",
+    "https://corsproxy.io/?https://frontend-api.pump.fun/coins?offset=0&limit=50&sort=created_timestamp&order=DESC&includeNsfw=false",
+    "https://corsproxy.io/?https://frontend-api.pump.fun/coins?offset=50&limit=50&sort=created_timestamp&order=DESC&includeNsfw=false",
+    "https://corsproxy.io/?https://frontend-api.pump.fun/coins?offset=0&limit=50&sort=last_trade_timestamp&order=DESC&includeNsfw=false",
   ];
 
   const results = await Promise.allSettled(
