@@ -1,11 +1,11 @@
 import { Bot, InlineKeyboard } from "grammy";
 import WebSocket from "ws";
+import fetch from "node-fetch";
 
 const BOT_TOKEN     = process.env.BOT_TOKEN;
 const CHAT_ID       = process.env.CHAT_ID;
 const MIN_BOND_PCT  = parseFloat(process.env.MIN_BOND_PCT || "0");
 const MAX_BOND_PCT  = parseFloat(process.env.MAX_BOND_PCT || "85");
-const MIN_REPLIES   = parseInt(process.env.MIN_REPLIES || "0");
 
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error("❌ BOT_TOKEN and CHAT_ID must be set.");
@@ -17,9 +17,41 @@ const seenMints = new Set();
 let foundTotal  = 0;
 const BOND_TARGET = 793_100_000_000;
 
+// Fetch full token details — try pump.fun first, fallback to mirror
+async function fetchTokenDetails(mint) {
+  const endpoints = [
+    `https://frontend-api.pump.fun/coins/${mint}`,
+    `https://client-api-2-74b1891ee9f9.herokuapp.com/coins/${mint}`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+          "Origin": "https://pump.fun",
+          "Referer": "https://pump.fun/",
+        },
+        timeout: 8000,
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.mint) {
+        console.log(`📡 Fetched from: ${url.includes("heroku") ? "mirror" : "pump.fun"}`);
+        return data;
+      }
+    } catch (e) {
+      console.log(`⚠️ Failed ${url}: ${e.message}`);
+    }
+  }
+  return null;
+}
+
 function getBondPct(token) {
-  if (!token.vSolInBondingCurve) return 0;
-  return Math.min(100, (token.vSolInBondingCurve / BOND_TARGET) * 100);
+  if (!token.vSolInBondingCurve && !token.virtual_sol_reserves) return 0;
+  const val = token.vSolInBondingCurve || token.virtual_sol_reserves;
+  return Math.min(100, (val / BOND_TARGET) * 100);
 }
 
 function formatMcap(v) {
@@ -54,10 +86,9 @@ function escMd(str = "") {
 async function sendAlert(t) {
   const pct     = getBondPct(t);
   const pumpUrl = `https://pump.fun/coin/${t.mint}`;
-
-  const tgUrl      = t.telegram  ? cleanUrl(t.telegram)  : null;
-  const discordUrl = t.discord   ? cleanUrl(t.discord)   : null;
-  const webUrl     = t.website   ? cleanUrl(t.website)   : null;
+  const tgUrl      = t.telegram ? cleanUrl(t.telegram) : null;
+  const discordUrl = t.discord  ? cleanUrl(t.discord)  : null;
+  const webUrl     = t.website  ? cleanUrl(t.website)  : null;
 
   const lines = [
     `🔭 *New PreBond Token Spotted*`,
@@ -67,8 +98,8 @@ async function sendAlert(t) {
     `${bondEmoji(pct)} Bond: \`${pct.toFixed(1)}%\``,
     `\`[${bondBar(pct)}]\``,
     ``,
-    `💰 MCap: \`${formatMcap(t.marketCapSol)}\``,
-    `💬 Replies: \`${t.replyCount || 0}\``,
+    `💰 MCap: \`${formatMcap(t.market_cap || t.marketCapSol)}\``,
+    `💬 Replies: \`${t.reply_count || t.replyCount || 0}\``,
     ``,
     `📋 \`${t.mint}\``,
   ];
@@ -78,10 +109,7 @@ async function sendAlert(t) {
     lines.push(``, `📝 ${escMd(desc)}${t.description.length > 120 ? "…" : ""}`);
   }
 
-  // Build keyboard with whatever links exist
-  const keyboard = new InlineKeyboard()
-    .url("🔗 pump.fun", pumpUrl);
-
+  const keyboard = new InlineKeyboard().url("🔗 pump.fun", pumpUrl);
   if (tgUrl)      keyboard.url("✈️ Telegram", tgUrl);
   if (discordUrl) keyboard.url("💬 Discord", discordUrl);
   if (webUrl)     keyboard.url("🌐 Website", webUrl);
@@ -101,6 +129,46 @@ async function sendAlert(t) {
 
 function sleep(ms) {
   return new Promise(res => setTimeout(res, ms));
+}
+
+// Queue to avoid hammering the API
+const queue = [];
+let processing = false;
+
+async function processQueue() {
+  if (processing) return;
+  processing = true;
+
+  while (queue.length > 0) {
+    const mint = queue.shift();
+    try {
+      // Wait 1s between fetches to be respectful
+      await sleep(1000);
+
+      const token = await fetchTokenDetails(mint);
+      if (!token) {
+        console.log(`⚠️ Could not fetch details for ${mint}`);
+        continue;
+      }
+
+      const bonded   = token.complete === true || token.raydium_pool != null;
+      const hasSocial = (token.telegram && token.telegram.trim().length > 0) ||
+                        (token.discord  && token.discord.trim().length  > 0) ||
+                        (token.website  && token.website.trim().length  > 0);
+      const pct      = getBondPct(token);
+
+      console.log(`👀 ${token.symbol} | TG: ${token.telegram || "—"} | Discord: ${token.discord || "—"} | Web: ${token.website || "—"} | Bond: ${pct.toFixed(1)}%`);
+
+      if (bonded || !hasSocial || pct < MIN_BOND_PCT || pct > MAX_BOND_PCT) return;
+
+      await sendAlert(token);
+
+    } catch (e) {
+      console.error(`Queue error for ${mint}:`, e.message);
+    }
+  }
+
+  processing = false;
 }
 
 function connectWebSocket() {
@@ -125,20 +193,10 @@ function connectWebSocket() {
       if (seenMints.has(token.mint)) return;
       seenMints.add(token.mint);
 
-      // Log every token so we can see what fields come through
-      console.log(`👀 ${token.symbol} | TG: ${token.telegram || "—"} | Discord: ${token.discord || "—"} | Web: ${token.website || "—"}`);
+      console.log(`🆕 New token detected: ${token.symbol} — queuing fetch...`);
+      queue.push(token.mint);
+      processQueue();
 
-      const bonded   = token.complete === true;
-      const hasSocial = (token.telegram && token.telegram.trim().length > 0) ||
-                        (token.discord  && token.discord.trim().length  > 0) ||
-                        (token.website  && token.website.trim().length  > 0);
-      const pct      = getBondPct(token);
-      const replies  = token.replyCount || 0;
-
-      if (bonded || !hasSocial || pct < MIN_BOND_PCT || pct > MAX_BOND_PCT || replies < MIN_REPLIES) return;
-
-      console.log(`🎯 ${token.symbol} | Bond: ${pct.toFixed(1)}% | Match!`);
-      await sendAlert(token);
     } catch (e) {}
   });
 
@@ -167,7 +225,8 @@ bot.command("status", async (ctx) => {
     `📊 *Scanner Status*\n\n` +
     `✅ Running via PumpPortal\n` +
     `📢 Alerts sent: \`${foundTotal}\`\n` +
-    `🧠 Tokens seen: \`${seenMints.size}\``,
+    `🧠 Tokens seen: \`${seenMints.size}\`\n` +
+    `📬 Queue: \`${queue.length}\``,
     { parse_mode: "MarkdownV2" }
   );
 });
@@ -175,8 +234,7 @@ bot.command("status", async (ctx) => {
 bot.command("config", async (ctx) => {
   await ctx.reply(
     `⚙️ *Current Config*\n\n` +
-    `Bond range: \`${MIN_BOND_PCT}% – ${MAX_BOND_PCT}%\`\n` +
-    `Min replies: \`${MIN_REPLIES}\``,
+    `Bond range: \`${MIN_BOND_PCT}% – ${MAX_BOND_PCT}%\``,
     { parse_mode: "MarkdownV2" }
   );
 });
