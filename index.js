@@ -40,7 +40,7 @@ function bondEmoji(pct) {
   return "🟢";
 }
 
-function cleanTgUrl(raw) {
+function cleanUrl(raw) {
   if (!raw) return null;
   const s = raw.trim();
   if (s.startsWith("http")) return s;
@@ -53,8 +53,11 @@ function escMd(str = "") {
 
 async function sendAlert(t) {
   const pct     = getBondPct(t);
-  const tgUrl   = cleanTgUrl(t.telegram);
   const pumpUrl = `https://pump.fun/coin/${t.mint}`;
+
+  const tgUrl      = t.telegram  ? cleanUrl(t.telegram)  : null;
+  const discordUrl = t.discord   ? cleanUrl(t.discord)   : null;
+  const webUrl     = t.website   ? cleanUrl(t.website)   : null;
 
   const lines = [
     `🔭 *New PreBond Token Spotted*`,
@@ -75,9 +78,13 @@ async function sendAlert(t) {
     lines.push(``, `📝 ${escMd(desc)}${t.description.length > 120 ? "…" : ""}`);
   }
 
+  // Build keyboard with whatever links exist
   const keyboard = new InlineKeyboard()
-    .url("🔗 pump.fun", pumpUrl)
-    .url("✈️ Telegram", tgUrl);
+    .url("🔗 pump.fun", pumpUrl);
+
+  if (tgUrl)      keyboard.url("✈️ Telegram", tgUrl);
+  if (discordUrl) keyboard.url("💬 Discord", discordUrl);
+  if (webUrl)     keyboard.url("🌐 Website", webUrl);
 
   try {
     await bot.api.sendMessage(CHAT_ID, lines.join("\n"), {
@@ -86,7 +93,7 @@ async function sendAlert(t) {
       disable_web_page_preview: true,
     });
     foundTotal++;
-    console.log(`✅ Alert sent: ${t.symbol} (bond: ${pct.toFixed(1)}%)`);
+    console.log(`✅ Alert sent: ${t.symbol} | TG: ${!!tgUrl} | Discord: ${!!discordUrl} | Web: ${!!webUrl}`);
   } catch (err) {
     console.error(`❌ Alert failed for ${t.mint}:`, err.message);
   }
@@ -118,14 +125,19 @@ function connectWebSocket() {
       if (seenMints.has(token.mint)) return;
       seenMints.add(token.mint);
 
-      const bonded  = token.complete === true;
-      const hasTg   = token.telegram && token.telegram.trim().length > 0;
-      const pct     = getBondPct(token);
-      const replies = token.replyCount || 0;
+      // Log every token so we can see what fields come through
+      console.log(`👀 ${token.symbol} | TG: ${token.telegram || "—"} | Discord: ${token.discord || "—"} | Web: ${token.website || "—"}`);
 
-      if (bonded || !hasTg || pct < MIN_BOND_PCT || pct > MAX_BOND_PCT || replies < MIN_REPLIES) return;
+      const bonded   = token.complete === true;
+      const hasSocial = (token.telegram && token.telegram.trim().length > 0) ||
+                        (token.discord  && token.discord.trim().length  > 0) ||
+                        (token.website  && token.website.trim().length  > 0);
+      const pct      = getBondPct(token);
+      const replies  = token.replyCount || 0;
 
-      console.log(`🎯 ${token.symbol} | Bond: ${pct.toFixed(1)}% | TG: ${token.telegram}`);
+      if (bonded || !hasSocial || pct < MIN_BOND_PCT || pct > MAX_BOND_PCT || replies < MIN_REPLIES) return;
+
+      console.log(`🎯 ${token.symbol} | Bond: ${pct.toFixed(1)}% | Match!`);
       await sendAlert(token);
     } catch (e) {}
   });
@@ -143,7 +155,7 @@ function connectWebSocket() {
 bot.command("start", async (ctx) => {
   await ctx.reply(
     "👋 *PreBond Scanner Bot*\n\n" +
-    "I watch pump\\.fun in real\\-time and alert you to new unbonded tokens with Telegram communities\\.\n\n" +
+    "I watch pump\\.fun in real\\-time and alert you to new unbonded tokens with Telegram, Discord or Website\\.\n\n" +
     "/status \\— show stats\n" +
     "/config \\— show filter settings",
     { parse_mode: "MarkdownV2" }
